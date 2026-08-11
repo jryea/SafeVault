@@ -1,0 +1,27 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+<form method="post">
+    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+
+    <label for="username">Username:</label>
+    <input asp-for="Input.Username" id="username" class="form-control" />
+    <span asp-validation-for="Input.Username" class="text-danger"></span>
+
+    <label for="email">Email:</label>
+    <input asp-for="Input.Email" id="email" class="form-control" />
+    <span asp-validation-for="Input.Email" class="text-danger"></span>
+
+    <button type="submit">Submit</button>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model.SanitizedUsername) && !string.IsNullOrWhiteSpace(Model.SanitizedEmail))
+{
+    <p>Sanitized Username: @Model.SanitizedUsername</p>
+    <p>Sanitized Email: @Model.SanitizedEmail</p>
+}
+
+@await Html.PartialAsync("_ValidationScriptsPartial")
