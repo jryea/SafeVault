@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SafeVault.Data;
+using SafeVault.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -7,6 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddScoped<UserQueryService>();
 
 var app = builder.Build();
 
