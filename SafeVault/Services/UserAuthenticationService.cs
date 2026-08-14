@@ -30,12 +30,16 @@ public class UserAuthenticationService(AppDbContext dbContext)
             return false;
         }
 
+        var hasAnyUsers = await dbContext.Users.AnyAsync(cancellationToken);
+        var role = hasAnyUsers ? AppRoles.User : AppRoles.Admin;
+
         var passwordHash = HashPassword(password);
         dbContext.Users.Add(new User
         {
             Username = sanitizedUsername,
             Email = sanitizedEmail,
-            PasswordHash = passwordHash
+            PasswordHash = passwordHash,
+            Role = role
         });
 
         await dbContext.SaveChangesAsync(cancellationToken);

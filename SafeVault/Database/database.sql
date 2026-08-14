@@ -2,5 +2,6 @@
     UserID INTEGER PRIMARY KEY AUTOINCREMENT,
     Username TEXT NOT NULL UNIQUE,
     Email TEXT NOT NULL,
-    PasswordHash TEXT NOT NULL
+    PasswordHash TEXT NOT NULL,
+    Role TEXT NOT NULL
 );

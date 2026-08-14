@@ -1,11 +1,12 @@
-﻿using NUnit.Framework;
+using System.Security.Claims;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using NUnit.Framework;
+using SafeVault.Data;
+using SafeVault.Models;
 using SafeVault.Services;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Threading.Tasks;
+using static BCrypt.Net.BCrypt;
 
 [TestFixture]
 public class TestInputValidation
@@ -18,7 +19,7 @@ public class TestInputValidation
         await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
         {
             await connection.OpenAsync();
-            var setupSql = @"
+            const string setupSql = @"
                 CREATE TABLE Users (
                     UserID INTEGER PRIMARY KEY AUTOINCREMENT,
                     Username TEXT NOT NULL,
@@ -55,8 +56,8 @@ public class TestInputValidation
                 File.Delete(databasePath);
             }
         }
-        // Placeholder for SQL Injection test
-    }
+    }
+
     [Test]
     public void TestForXSS()
     {
@@ -71,6 +72,83 @@ public class TestInputValidation
         Assert.That(sanitizedUsername, Does.Not.Contain(">"));
         Assert.That(sanitizedUsername, Is.EqualTo("scriptalertxssscriptjohn"));
         Assert.That(emailIsValid, Is.False, "Invalid script-based email payload should be rejected.");
-        // Placeholder for XSS test
-    }
+    }
+
+    [Test]
+    public async Task AuthenticateAsync_InvalidPassword_ReturnsNull()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var dbContext = CreateDbContext(connection);
+        await dbContext.Database.EnsureCreatedAsync();
+        dbContext.Users.Add(new User
+        {
+            Username = "admin",
+            Email = "admin@example.com",
+            PasswordHash = HashPassword("CorrectPassword1!"),
+            Role = AppRoles.Admin
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new UserAuthenticationService(dbContext);
+        var result = await service.AuthenticateAsync("admin", "WrongPassword1!");
+
+        Assert.That(result, Is.Null, "Invalid login attempts must not authenticate the user.");
+    }
+
+    [Test]
+    public async Task RegisterUserAsync_AssignsAdminToFirstUser_AndUserToSecond()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var dbContext = CreateDbContext(connection);
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var service = new UserAuthenticationService(dbContext);
+
+        var firstCreated = await service.RegisterUserAsync("firstadmin", "first@example.com", "Password123!");
+        var secondCreated = await service.RegisterUserAsync("seconduser", "second@example.com", "Password123!");
+
+        var users = await dbContext.Users.OrderBy(u => u.UserID).ToListAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(firstCreated, Is.True);
+            Assert.That(secondCreated, Is.True);
+            Assert.That(users.Count, Is.EqualTo(2));
+            Assert.That(users[0].Role, Is.EqualTo(AppRoles.Admin));
+            Assert.That(users[1].Role, Is.EqualTo(AppRoles.User));
+        });
+    }
+
+    [Test]
+    public void AccessControl_RequiresAdminRole()
+    {
+        var unauthenticatedPrincipal = new ClaimsPrincipal(new ClaimsIdentity());
+        var userPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, "basicuser"), new Claim(ClaimTypes.Role, AppRoles.User)],
+            "Cookies"));
+        var adminPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, "admin"), new Claim(ClaimTypes.Role, AppRoles.Admin)],
+            "Cookies"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(unauthenticatedPrincipal.Identity?.IsAuthenticated ?? false, Is.False);
+            Assert.That(unauthenticatedPrincipal.IsInRole(AppRoles.Admin), Is.False, "Unauthenticated users are unauthorized for admin features.");
+            Assert.That(userPrincipal.IsInRole(AppRoles.Admin), Is.False, "Non-admin role should be denied admin access.");
+            Assert.That(adminPrincipal.IsInRole(AppRoles.Admin), Is.True, "Admin role should be authorized for admin access.");
+        });
+    }
+
+    private static AppDbContext CreateDbContext(SqliteConnection connection)
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        return new AppDbContext(options);
+    }
 }

@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using SafeVault.Services;
@@ -34,8 +37,23 @@ public class LoginModel(UserAuthenticationService authenticationService) : PageM
             return Page();
         }
 
-        Message = $"Authenticated: {user.Username}";
-        return Page();
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.UserID.ToString()),
+            new(ClaimTypes.Name, user.Username),
+            new(ClaimTypes.Role, user.Role)
+        };
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme));
+        await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+
+        return RedirectToPage("/Index");
+    }
+
+    public async Task<IActionResult> OnPostLogoutAsync()
+    {
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return RedirectToPage("/Login");
     }
 
     public async Task<IActionResult> OnPostRegisterAsync(CancellationToken cancellationToken)
