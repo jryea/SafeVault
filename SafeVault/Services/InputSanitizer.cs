@@ -5,21 +5,29 @@ namespace SafeVault.Services;
 
 public static partial class InputSanitizer
 {
-    [GeneratedRegex("[^a-zA-Z0-9._-]")]
-    private static partial Regex UsernameUnsafeCharacters();
-
-    [GeneratedRegex("[^a-z0-9@._+\\-]")]
-    private static partial Regex EmailUnsafeCharacters();
+    [GeneratedRegex("^[a-zA-Z0-9._-]{3,32}$")]
+    private static partial Regex UsernameAllowedPattern();
 
     public static bool TrySanitizeUsername(string? input, out string sanitized)
     {
-        sanitized = UsernameUnsafeCharacters().Replace((input ?? string.Empty).Trim(), string.Empty);
-        return sanitized.Length is >= 3 and <= 32;
+        sanitized = (input ?? string.Empty).Trim();
+        if (!UsernameAllowedPattern().IsMatch(sanitized))
+        {
+            sanitized = string.Empty;
+            return false;
+        }
+
+        return true;
     }
 
     public static bool TrySanitizeEmail(string? input, out string sanitized)
     {
-        var normalized = EmailUnsafeCharacters().Replace((input ?? string.Empty).Trim().ToLowerInvariant(), string.Empty);
+        var normalized = (input ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized.Length is 0 or > 254)
+        {
+            sanitized = string.Empty;
+            return false;
+        }
 
         try
         {

@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Data;
 using SafeVault.Models;
 
 namespace SafeVault.Services;
@@ -10,12 +11,21 @@ public class UserQueryService(IConfiguration configuration)
 
     public async Task<User?> GetUserByUsernameAsync(string username, CancellationToken cancellationToken = default)
     {
+        if (!InputSanitizer.TrySanitizeUsername(username, out var sanitizedUsername))
+        {
+            return null;
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT UserID, Username, Email FROM Users WHERE Username = @username LIMIT 1;";
-        command.Parameters.AddWithValue("@username", username);
+        var usernameParameter = command.CreateParameter();
+        usernameParameter.ParameterName = "@username";
+        usernameParameter.DbType = DbType.String;
+        usernameParameter.Value = sanitizedUsername;
+        command.Parameters.Add(usernameParameter);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -34,13 +44,25 @@ public class UserQueryService(IConfiguration configuration)
     public async Task<IReadOnlyList<User>> SearchUsersByUsernameAsync(string searchInput, CancellationToken cancellationToken = default)
     {
         var users = new List<User>();
+        var normalizedInput = (searchInput ?? string.Empty).Trim();
+        if (normalizedInput.Length > 64)
+        {
+            normalizedInput = normalizedInput[..64];
+        }
+
+        var escapedLikeInput = EscapeLikePattern(normalizedInput);
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT UserID, Username, Email FROM Users WHERE Username LIKE @searchPattern ORDER BY Username LIMIT 25;";
-        command.Parameters.AddWithValue("@searchPattern", $"%{searchInput}%");
+        command.CommandText = "SELECT UserID, Username, Email FROM Users WHERE Username LIKE @searchPattern ESCAPE '\\' ORDER BY Username LIMIT 25;";
+
+        var searchParameter = command.CreateParameter();
+        searchParameter.ParameterName = "@searchPattern";
+        searchParameter.DbType = DbType.String;
+        searchParameter.Value = $"%{escapedLikeInput}%";
+        command.Parameters.Add(searchParameter);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -54,5 +76,13 @@ public class UserQueryService(IConfiguration configuration)
         }
 
         return users;
+    }
+
+    private static string EscapeLikePattern(string input)
+    {
+        return input
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
     }
 }

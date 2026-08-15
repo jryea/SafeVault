@@ -59,6 +59,54 @@ public class TestInputValidation
     }
 
     [Test]
+    public async Task SearchUsers_SQLInjectionPayload_DoesNotBypassFilter()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"safevault-search-security-{Guid.NewGuid():N}.db");
+
+        await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await connection.OpenAsync();
+            const string setupSql = @"
+                CREATE TABLE Users (
+                    UserID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Username TEXT NOT NULL,
+                    Email TEXT NOT NULL
+                );
+                INSERT INTO Users (Username, Email) VALUES ('alice', 'alice@example.com');
+                INSERT INTO Users (Username, Email) VALUES ('bob', 'bob@example.com');";
+
+            await using var setupCommand = connection.CreateCommand();
+            setupCommand.CommandText = setupSql;
+            await setupCommand.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:DefaultConnection"] = $"Data Source={databasePath}"
+                })
+                .Build();
+
+            var service = new UserQueryService(configuration);
+            var maliciousSearch = "%' OR 1=1 --";
+
+            var results = await service.SearchUsersByUsernameAsync(maliciousSearch);
+
+            Assert.That(results, Is.Empty, "Escaped LIKE pattern and parameters should prevent wildcard/SQL payload bypass.");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Test]
     public void TestForXSS()
     {
         var usernameInput = "<script>alert('xss')</script>john";
@@ -67,11 +115,26 @@ public class TestInputValidation
         var usernameIsValid = InputSanitizer.TrySanitizeUsername(usernameInput, out var sanitizedUsername);
         var emailIsValid = InputSanitizer.TrySanitizeEmail(emailInput, out _);
 
-        Assert.That(usernameIsValid, Is.True);
-        Assert.That(sanitizedUsername, Does.Not.Contain("<"));
-        Assert.That(sanitizedUsername, Does.Not.Contain(">"));
-        Assert.That(sanitizedUsername, Is.EqualTo("scriptalertxssscriptjohn"));
+        Assert.That(usernameIsValid, Is.False, "Username with script payload should be rejected, not transformed.");
+        Assert.That(sanitizedUsername, Is.EqualTo(string.Empty));
         Assert.That(emailIsValid, Is.False, "Invalid script-based email payload should be rejected.");
+    }
+
+    [Test]
+    public async Task RegisterUser_XssPayloadInFormFields_IsRejected()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        await using var dbContext = CreateDbContext(connection);
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var service = new UserAuthenticationService(dbContext);
+
+        var created = await service.RegisterUserAsync("<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "Password123!");
+
+        Assert.That(created, Is.False, "Registration must fail when form fields contain malicious scripts.");
+        Assert.That(await dbContext.Users.CountAsync(), Is.EqualTo(0));
     }
 
     [Test]
